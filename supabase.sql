@@ -1,229 +1,79 @@
--- ============================================
--- LISTRAYL CHESS - COMPLETE SUPABASE SETUP
--- ============================================
+-- LISTRAYL CHESS complete Supabase setup
+-- Run this entire file in Supabase SQL Editor.
 
--- 1. PLAYERS TABLE
-CREATE TABLE IF NOT EXISTS public.players (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    wins INTEGER NOT NULL DEFAULT 0,
-    losses INTEGER NOT NULL DEFAULT 0,
-    games INTEGER NOT NULL DEFAULT 0,
-    coins INTEGER NOT NULL DEFAULT 0,
-    xp INTEGER NOT NULL DEFAULT 0,
-    rank TEXT NOT NULL DEFAULT 'Rookie',
-    streak INTEGER NOT NULL DEFAULT 0,
-    best_streak INTEGER NOT NULL DEFAULT 0,
-    active_mythic TEXT NOT NULL DEFAULT 'storm',
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+create extension if not exists pgcrypto;
+
+create table if not exists public.players (
+  id uuid primary key,
+  name text not null,
+  wins integer not null default 0,
+  losses integer not null default 0,
+  games integer not null default 0,
+  coins integer not null default 0,
+  xp integer not null default 0,
+  rank text not null default 'Rookie',
+  streak integer not null default 0,
+  best_streak integer not null default 0,
+  active_mythic text not null default 'storm',
+  updated_at timestamptz not null default now()
 );
 
--- 2. Make sure required player columns exist
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS name TEXT;
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS wins INTEGER NOT NULL DEFAULT 0;
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS losses INTEGER NOT NULL DEFAULT 0;
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS games INTEGER NOT NULL DEFAULT 0;
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS coins INTEGER NOT NULL DEFAULT 0;
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0;
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS rank TEXT NOT NULL DEFAULT 'Rookie';
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS streak INTEGER NOT NULL DEFAULT 0;
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS best_streak INTEGER NOT NULL DEFAULT 0;
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS active_mythic TEXT NOT NULL DEFAULT 'storm';
-
-ALTER TABLE public.players
-ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-
-
--- ============================================
--- 3. ROOMS TABLE
--- ============================================
-
-CREATE TABLE IF NOT EXISTS public.rooms (
-    room_code TEXT PRIMARY KEY,
-    host_uid UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    white_uid UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    white_name TEXT NOT NULL,
-    black_uid UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-    black_name TEXT,
-    white_rank TEXT NOT NULL DEFAULT 'Rookie',
-    black_rank TEXT,
-    board JSONB NOT NULL,
-    turn TEXT NOT NULL DEFAULT 'w',
-    status TEXT NOT NULL DEFAULT 'waiting',
-    winner UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-    rewarded_by JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+create table if not exists public.rooms (
+  room_code text primary key,
+  host_uid uuid not null,
+  white_uid uuid not null,
+  white_name text not null,
+  black_uid uuid,
+  black_name text,
+  white_rank text not null default 'Rookie',
+  black_rank text,
+  board jsonb not null,
+  turn text not null default 'w',
+  status text not null default 'waiting',
+  winner uuid,
+  rewarded_by jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
 );
 
--- Add columns if rooms already existed
-ALTER TABLE public.rooms
-ADD COLUMN IF NOT EXISTS black_name TEXT;
+alter table public.players enable row level security;
+alter table public.rooms enable row level security;
 
-ALTER TABLE public.rooms
-ADD COLUMN IF NOT EXISTS white_rank TEXT NOT NULL DEFAULT 'Rookie';
+drop policy if exists players_public_all on public.players;
+create policy players_public_all on public.players for all to anon, authenticated using (true) with check (true);
 
-ALTER TABLE public.rooms
-ADD COLUMN IF NOT EXISTS black_rank TEXT;
+drop policy if exists rooms_public_all on public.rooms;
+create policy rooms_public_all on public.rooms for all to anon, authenticated using (true) with check (true);
 
-ALTER TABLE public.rooms
-ADD COLUMN IF NOT EXISTS rewarded_by JSONB NOT NULL DEFAULT '{}'::jsonb;
+-- Keep existing databases compatible with this version.
+alter table public.rooms add column if not exists black_name text;
+alter table public.rooms add column if not exists white_rank text not null default 'Rookie';
+alter table public.rooms add column if not exists black_rank text;
+alter table public.rooms add column if not exists black_uid uuid;
+alter table public.rooms add column if not exists white_name text;
+alter table public.rooms add column if not exists board jsonb;
+alter table public.rooms add column if not exists turn text not null default 'w';
+alter table public.rooms add column if not exists status text not null default 'waiting';
+alter table public.rooms add column if not exists winner uuid;
+alter table public.rooms add column if not exists rewarded_by jsonb not null default '{}'::jsonb;
+alter table public.rooms add column if not exists created_at timestamptz not null default now();
 
-ALTER TABLE public.rooms
-ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+-- Idempotent Realtime setup: only add a table if it is not already present.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname='supabase_realtime' and schemaname='public' and tablename='rooms'
+  ) then
+    alter publication supabase_realtime add table public.rooms;
+  end if;
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname='supabase_realtime' and schemaname='public' and tablename='players'
+  ) then
+    alter publication supabase_realtime add table public.players;
+  end if;
+end $$;
 
-
--- ============================================
--- 4. INDEXES
--- ============================================
-
-CREATE INDEX IF NOT EXISTS players_xp_idx
-ON public.players (xp DESC);
-
-CREATE INDEX IF NOT EXISTS players_wins_idx
-ON public.players (wins DESC);
-
-CREATE INDEX IF NOT EXISTS rooms_status_idx
-ON public.rooms (status);
-
-CREATE INDEX IF NOT EXISTS rooms_created_idx
-ON public.rooms (created_at DESC);
-
-
--- ============================================
--- 5. ROW LEVEL SECURITY
--- ============================================
-
-ALTER TABLE public.players ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.rooms ENABLE ROW LEVEL SECURITY;
-
-
--- Remove old policies if present
-DROP POLICY IF EXISTS players_authenticated_all
-ON public.players;
-
-DROP POLICY IF EXISTS players_select_authenticated
-ON public.players;
-
-DROP POLICY IF EXISTS players_insert_authenticated
-ON public.players;
-
-DROP POLICY IF EXISTS players_update_authenticated
-ON public.players;
-
-DROP POLICY IF EXISTS rooms_authenticated_all
-ON public.rooms;
-
-DROP POLICY IF EXISTS rooms_select_authenticated
-ON public.rooms;
-
-DROP POLICY IF EXISTS rooms_insert_authenticated
-ON public.rooms;
-
-DROP POLICY IF EXISTS rooms_update_authenticated
-ON public.rooms;
-
-
--- PLAYERS: authenticated users can read/write
-CREATE POLICY players_select_authenticated
-ON public.players
-FOR SELECT
-TO authenticated
-USING (true);
-
-CREATE POLICY players_insert_authenticated
-ON public.players
-FOR INSERT
-TO authenticated
-WITH CHECK (true);
-
-CREATE POLICY players_update_authenticated
-ON public.players
-FOR UPDATE
-TO authenticated
-USING (true)
-WITH CHECK (true);
-
-
--- ROOMS: everyone authenticated can create/read/update rooms
-CREATE POLICY rooms_select_authenticated
-ON public.rooms
-FOR SELECT
-TO authenticated
-USING (true);
-
-CREATE POLICY rooms_insert_authenticated
-ON public.rooms
-FOR INSERT
-TO authenticated
-WITH CHECK (true);
-
-CREATE POLICY rooms_update_authenticated
-ON public.rooms
-FOR UPDATE
-TO authenticated
-USING (true)
-WITH CHECK (true);
-
-
--- ============================================
--- 6. ENABLE REALTIME SAFELY
--- ============================================
-
-DO $$
-BEGIN
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_publication_tables
-        WHERE pubname = 'supabase_realtime'
-        AND schemaname = 'public'
-        AND tablename = 'players'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime
-        ADD TABLE public.players;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_publication_tables
-        WHERE pubname = 'supabase_realtime'
-        AND schemaname = 'public'
-        AND tablename = 'rooms'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime
-        ADD TABLE public.rooms;
-    END IF;
-
-END $$;
-
-
--- ============================================
--- 7. VERIFY EVERYTHING
--- ============================================
-
-SELECT
-    table_schema,
-    table_name
-FROM information_schema.tables
-WHERE table_schema = 'public'
-AND table_name IN ('players', 'rooms')
-ORDER BY table_name;
+-- Useful indexes.
+create index if not exists rooms_status_idx on public.rooms(status);
+create index if not exists players_xp_idx on public.players(xp desc);
